@@ -1,0 +1,21 @@
+# Flexagon application skeleton
+#
+# Flexagon : PHP Development Framework
+# Copyright (c) 2010-2026 Younghwan Yong
+# MIT License (https://opensource.org/licenses/MIT)
+
+# Dependencies are installed, never committed.
+/vendor/
+
+# composer.lock is deliberately absent here: an application should commit its
+# own lock file, so this skeleton must not teach projects to ignore it.
+
+# PHPUnit (cacheDirectory in phpunit.xml)
+/.phpunit.cache/
+.phpunit.result.cache
+
+# Editors and OS. .vscode/ is tracked on purpose -- it ships the Flexagon
+# snippets -- so only the JetBrains and Finder leftovers are listed.
+/.idea/
+*.iml
+.DS_Store
