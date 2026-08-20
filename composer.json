@@ -1,0 +1,43 @@
+{
+    "name": "flexagon/skeleton",
+    "description": "Application skeleton for the Flexagon PHP framework",
+    "type": "project",
+    "keywords": [
+        "framework",
+        "skeleton",
+        "flexagon"
+    ],
+    "homepage": "https://flexagon.org",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Younghwan Yong",
+            "email": "young@phpk.org",
+            "homepage": "https://flexagon.org",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/flexagon/skeleton/issues",
+        "source": "https://github.com/flexagon/skeleton"
+    },
+    "require": {
+        "php": ">=8.3",
+        "flexagon/framework": "^3.5"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "": [
+                "application/"
+            ]
+        }
+    },
+    "config": {
+        "platform-check": false,
+        "allow-plugins": true,
+        "sort-packages": true
+    }
+}

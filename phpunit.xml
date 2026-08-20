@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        processIsolation="true"
+        stopOnError="false"
+        stopOnFailure="false"
+        stopOnIncomplete="false"
+        stopOnSkipped="false"
+        bootstrap="flexagon.php"
+        cacheDirectory=".phpunit.cache"
+        backupStaticProperties="false"
+        requireCoverageMetadata="false">
+</phpunit>
