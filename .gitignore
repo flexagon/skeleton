@@ -4,11 +4,17 @@
 # Copyright (c) 2010-2026 Younghwan Yong
 # MIT License (https://opensource.org/licenses/MIT)
 
-# Dependencies are installed, never committed.
+# Dependencies are installed, never committed. composer.phar is the local
+# Composer some IDEs (PhpStorm) download into the project root.
 /vendor/
+/composer.phar
 
 # This machine's secrets. .env.example.php is the committed template.
 /.env.php
+
+# Ant deploy output (build.xml) and its local settings.
+/build/deploy/
+/build/build.properties
 
 # .claude/settings.json is shared and blocks .env.php; the local file is personal.
 /.claude/settings.local.json

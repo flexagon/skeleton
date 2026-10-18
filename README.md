@@ -112,7 +112,7 @@ composer require flexagon/framework
 composer exec flexagon init      # or php vendor/bin/flexagon init
 ```
 
-`init` creates the 31 files that make up the project structure, including `public/`, `application/`, `script/`, and `flexagon.php`. **Existing files are left untouched**, so you can also use it after an upgrade to add only newly introduced structure files. Use `--force` to overwrite existing files.
+`init` creates the 34 files that make up the project structure, including `public/`, `application/`, `script/`, and `flexagon.php`. **Existing files are left untouched**, so you can also use it after an upgrade to add only newly introduced structure files. Use `--force` to overwrite existing files.
 
 ```
 create   flexagon.php
@@ -183,6 +183,8 @@ docker run -p 8080:8080 -e FLEXAGON_PUBLIC=public_admin -e DB_HOST=... myapp    
 
 - Hand secrets in as environment variables through your platform's secret store. `.dockerignore` keeps `.env.php` and `.env` out of the build, so they never reach an image.
 - Build one image and run it as one service per site, changing only `FLEXAGON_PUBLIC`. Each site can then have its own database account, scaling and network exposure (an admin site on the internal network only, say).
+- Each stage (`alpha`, `beta`, `production`) is built as its own image with `--target`, so tell them apart by tag, such as `myapp:1.0.0-beta`.
+- The build does not use the host's `vendor/`; it installs from `composer.lock` inside the container. Path repositories inside the project (`./packages/...`) are installed too.
 - Sessions are encrypted cookies, so more instances need no shared store. Give every instance the same `SESSION_ENCRYPTION_STRING`.
 - A container's file system is gone on restart. Do not use SQLite or local uploads in production; use a managed database and object storage.
 - With a read-only root file system, mount tmpfs at `/var/run/apache2` and `/tmp`.
@@ -230,7 +232,7 @@ return [
 | `Env::int($key, $default)` / `Env::bool($key, $default)` | Typed value; throws when it does not parse |
 | `Env::has($key)` | Whether the key is set |
 
-A value is looked up in **the process environment first, then `.env.php`, then the default**. In production you can set the same keys through PHP-FPM `env[...]`, Docker or your platform, and leave `.env.php` out. The file is plain PHP, so opcache keeps it compiled and values keep their types. It is read the first time `Env` is used, so an application that does not use it pays nothing. Define `ENV_FILE` before boot, or call `Env::load($path)`, to read another file.
+A value is looked up in **the process environment first, then `.env.php`, then the default**. In production you can set the same keys through PHP-FPM `env[...]`, Docker or your platform, and leave `.env.php` out. The file is plain PHP, so opcache keeps it compiled and values keep their types. It is read the first time `Env` is used, so an application that does not use it pays nothing. Define `ENV_FILE` before boot, or call `Env::load($path)`, to read another file. How to keep each server's `.env.php` outside the project (in `/etc/flexagon/` or the like) is in `application/_Config/README.md`.
 
 Nothing is written to `putenv()` or `$_ENV`, error messages name the key but never the value, and `var_dump()` of a `DataSourceModel` shows the password as `***`.
 
@@ -299,7 +301,7 @@ myapp/
 │   ├── _Global.php              #   Application globals (extends BaseGlobal)
 │   ├── _Const.php               #   Application constants
 │   ├── _Config.php              #   Base configuration, including data sources
-│   ├── _Config/                 #   Stage-specific configuration (alpha · beta · production)
+│   ├── _Config/                 #   Stage-specific configuration (alpha · beta · production, see README.md)
 │   └── <Namespace>/             #   Models and DAOs
 ├── public/                      # ← document root
 │   ├── .htaccess
@@ -310,6 +312,11 @@ myapp/
 │   ├── _Template/               #   Shared templates (head · tail · error404)
 │   └── **/*.php                 #   Pages mapped 1:1 to URLs
 ├── script/                      # CLI jobs
+├── docker/                      # Container setup (Apache · entrypoint · php.ini)
+├── .env.example.php             # Example .env.php (the secret keys)
+├── Dockerfile                   # dev · alpha · beta · production targets
+├── compose.yaml                 # Containers for local development
+├── build.xml                    # Deploys without containers (ant production)
 ├── composer.json
 ├── flexagon.php                 # Bootstrap loader
 └── vendor/
@@ -320,7 +327,7 @@ myapp/
 
 The `_Flexagon\` namespace resolves to the framework itself and normally does not need to be defined by the application.
 
-**Expose only `public/` to the web.** `application/_Config.php` contains database credentials; if the document root points to the project root, those files may be served directly.
+**Expose only `public/` to the web.** The project root holds secrets in `.env.php` and `application/` holds settings and code; if the document root points to the project root, they may be served as is.
 
 ---
 
@@ -489,7 +496,7 @@ Place stage-specific configuration in `application/_Config/<stage>/_Config.php` 
 php script/batch.php runtimeStage=production
 ```
 
-The default stage directories are `alpha`, `beta`, and `production`. A Docker image built with the target of the same name (`--target production` and so on) gets that stage directory's files copied into `application/` (see [Docker](#docker)).
+The default stage directories are `alpha`, `beta`, and `production`. A Docker image built with the target of the same name (`--target production` and so on) gets that stage directory's files copied into `application/` (see [Docker](#docker)). To deploy without containers, `ant production` (or `alpha`, `beta`) builds what goes on the server in `build/deploy/<stage>`: secret and development files left out, the stage's files copied over, and `vendor/` installed from `composer.lock` with `--no-dev`. How a stage is applied, and how to keep secrets apart with `Env`, is written up in `application/_Config/README.md`.
 
 ---
 
@@ -1135,7 +1142,7 @@ php script/flexagon.php check [--path=DIR]
 
 #### `init`
 
-Creates the 31 files that make up the project structure. If you started with `composer create-project flexagon/skeleton`, these files already exist. This command is primarily useful when **adding `flexagon/framework` to an existing project with `composer require`**.
+Creates the 34 files that make up the project structure. If you started with `composer create-project flexagon/skeleton`, these files already exist. This command is primarily useful when **adding `flexagon/framework` to an existing project with `composer require`**.
 
 **Existing files are left untouched.** You can also run the command after an upgrade to add only newly introduced structure files.
 

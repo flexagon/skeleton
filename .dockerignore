@@ -11,9 +11,15 @@
 .vscode
 .DS_Store
 
-# Installed fresh, without require-dev, inside the build.
+# Installed fresh, without require-dev, inside the build, which brings its
+# own Composer.
 vendor
+composer.phar
 
 tests
+
+# The Ant deploy (build.xml) and its output have no place in an image.
+build
+build.xml
 .phpunit.cache
 .phpunit.result.cache

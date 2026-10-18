@@ -72,7 +72,7 @@ docker build --target production --platform linux/amd64 -t myapp:1.0.0 .
 - Each stage builds its own image, so tell them apart by tag (for example `myapp:1.0.0-beta`). Secrets still come in as environment variables at run time.
 - Without `--target`, the last stage, `production`, is built. It is still better to write it out so it is clear what is being built.
 - The other stages, `base` (PHP, Apache, extensions), `build` (`composer install --no-dev`), `config-<stage>` (copies the stage config) and `runtime` (production php.ini), are intermediate and not used directly.
-- To add a stage, create `application/_Config/<name>/` and add a `config-<name>` stage and a `<name>` target block to the `Dockerfile`, like the existing ones.
+- To add a stage, create `application/_Config/<name>/`, then add a `config-<name>` stage and a `<name>` target block to the `Dockerfile`, and a `<name>` target to `build.xml`, like the existing ones.
 - The `dev` image has no code in it. Run it with `docker run` and no mount, and it exits at once because the `FLEXAGON_PUBLIC` directory does not exist. For local development use `docker compose up`.
 
 - **PHP extensions** — list **every** extension the image should have in `PHP_EXTENSIONS` at the top of the `Dockerfile`. So that a build or a request does not fail for a missing one, the default carries commonly used extensions; **delete what you do not use** to keep the image small.

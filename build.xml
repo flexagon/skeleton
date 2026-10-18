@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+ * Ant build for deploying without containers
+ *
+ * Flexagon : PHP Development Framework
+ *
+ * @copyright     Copyright (c) 2010-2026 Younghwan Yong
+ * @link          https://flexagon.org
+ * @license       MIT License (https://opensource.org/licenses/MIT)
+ *
+ *   ant production                     build/deploy/production
+ *   ant alpha | ant beta               build/deploy/alpha, build/deploy/beta
+ *   ant production -Ddeploy.dir=DIR    another output directory
+ *
+ * The output is what goes on a server: the project without its development
+ * and secret files, application/_Config/<stage>/ copied over application/,
+ * and vendor/ installed from composer.lock without require-dev. Upload it with
+ * rsync, scp or your deploy tool. The project itself is never changed.
+ *
+ * Composer is the composer property when it is set, else composer.phar in
+ * the project root (run with php), else composer on the PATH. Per stage
+ * output directories and the commands can be set in build/build.properties
+ * (see build/sample_build.properties).
+-->
+<project name="FlexagonDeploy" basedir="." default="production" xmlns:if="ant:if" xmlns:unless="ant:unless">
+
+    <property file="build/build.properties"/>
+    <property name="deploy.root" location="build/deploy"/>
+    <property name="php" value="php"/>
+
+    <!-- composer.phar beside this file, used only when composer is not set. -->
+    <condition property="composer.phar" value="${basedir}/composer.phar">
+        <and>
+            <not><isset property="composer"/></not>
+            <available file="${basedir}/composer.phar"/>
+        </and>
+    </condition>
+    <property name="composer" value="composer"/>
+
+    <target name="alpha" description="Build the alpha deploy">
+        <flexagon-deploy stage="alpha"/>
+    </target>
+
+    <target name="beta" description="Build the beta deploy">
+        <flexagon-deploy stage="beta"/>
+    </target>
+
+    <target name="production" description="Build the production deploy">
+        <flexagon-deploy stage="production"/>
+    </target>
+
+    <!-- The target names of earlier versions. -->
+    <target name="buildAlpha" depends="alpha"/>
+    <target name="buildBeta" depends="beta"/>
+    <target name="buildProduction" depends="production"/>
+
+    <macrodef name="flexagon-deploy">
+        <attribute name="stage"/>
+        <sequential>
+            <fail message="application/_Config/@{stage}/ does not exist">
+                <condition>
+                    <not><available file="application/_Config/@{stage}" type="dir"/></not>
+                </condition>
+            </fail>
+
+            <!-- -Ddeploy.dir wins, then deploy.dir.<stage>, then build/deploy/<stage>. -->
+            <property name="deploy.dir.@{stage}" location="${deploy.root}/@{stage}"/>
+            <local name="out.raw"/>
+            <condition property="out.raw" value="${deploy.dir}" else="${deploy.dir.@{stage}}">
+                <isset property="deploy.dir"/>
+            </condition>
+            <local name="out"/>
+            <property name="out" location="${out.raw}"/>
+
+            <!--
+              The output directory is emptied before each build, so it must
+              never be /, the home directory, the project or one of its
+              parents, or a directory inside the project other than
+              build/deploy.
+            -->
+            <local name="unsafe"/>
+            <condition property="unsafe">
+                <or>
+                    <equals arg1="${out}" arg2="/"/>
+                    <equals arg1="${out}" arg2="${user.home}"/>
+                    <equals arg1="${out}" arg2="${basedir}"/>
+                    <!-- The leading | makes these prefix tests, not substring tests. -->
+                    <contains string="|${basedir}/" substring="|${out}/"/>
+                    <and>
+                        <contains string="|${out}/" substring="|${basedir}/"/>
+                        <not><contains string="|${out}/" substring="|${deploy.root}/"/></not>
+                    </and>
+                </or>
+            </condition>
+            <fail if="unsafe" message="refusing to build into ${out}: pick a directory of its own, such as ${deploy.root}/@{stage}"/>
+
+            <!-- Only a directory this build made earlier (it carries the marker) is emptied. -->
+            <local name="foreign"/>
+            <condition property="foreign">
+                <and>
+                    <available file="${out}" type="dir"/>
+                    <not><available file="${out}/.flexagon-deploy"/></not>
+                    <resourcecount when="greater" count="0">
+                        <fileset dir="${out}" defaultexcludes="no" erroronmissingdir="false"/>
+                    </resourcecount>
+                </and>
+            </condition>
+            <fail if="foreign" message="${out} is not empty and was not made by this build; empty it or pick another -Ddeploy.dir"/>
+
+            <delete dir="${out}" quiet="true"/>
+            <mkdir dir="${out}"/>
+            <touch file="${out}/.flexagon-deploy"/>
+
+            <echo message="==> @{stage} into ${out}"/>
+            <copy todir="${out}" preservelastmodified="true" includeemptydirs="false">
+                <fileset dir="${basedir}">
+                    <!-- Secrets: each server has its own environment or .env.php. -->
+                    <exclude name=".env.php"/>
+                    <exclude name="**/.env.php"/>
+                    <exclude name=".env"/>
+                    <exclude name="**/.env"/>
+                    <!-- Installed below from composer.lock, without require-dev. -->
+                    <exclude name="vendor/**"/>
+                    <exclude name="composer.phar"/>
+                    <!-- Development only. -->
+                    <exclude name="build/**"/>
+                    <exclude name="build.xml"/>
+                    <exclude name="tests/**"/>
+                    <exclude name="phpunit.xml"/>
+                    <exclude name=".phpunit.cache/**"/>
+                    <exclude name=".phpunit.result.cache"/>
+                    <exclude name=".claude/**"/>
+                    <exclude name=".idea/**"/>
+                    <exclude name=".vscode/**"/>
+                    <exclude name="*.iml"/>
+                    <exclude name="docs/ide/**"/>
+                    <!-- Containers build their own image. -->
+                    <exclude name="Dockerfile"/>
+                    <exclude name="compose.yaml"/>
+                    <exclude name=".dockerignore"/>
+                    <exclude name="docker/**"/>
+                </fileset>
+            </copy>
+
+            <!-- Every file in the stage directory replaces its namesake in application/. -->
+            <copy todir="${out}/application" overwrite="true" preservelastmodified="true">
+                <fileset dir="application/_Config/@{stage}"/>
+            </copy>
+
+            <local name="composer.project"/>
+            <available property="composer.project" file="${out}/composer.json"/>
+            <local name="composer.install"/>
+            <property name="composer.install" value="install --no-dev --optimize-autoloader --no-interaction --prefer-dist"/>
+            <sequential if:set="composer.project">
+                <exec executable="${php}" dir="${out}" failonerror="true" if:set="composer.phar">
+                    <arg file="${composer.phar}"/>
+                    <arg line="${composer.install}"/>
+                </exec>
+                <exec executable="${composer}" dir="${out}" failonerror="true" unless:set="composer.phar">
+                    <arg line="${composer.install}"/>
+                </exec>
+            </sequential>
+
+            <!-- Fails on a layout or config problem; settings the server supplies are warnings. -->
+            <local name="flexagon.cli"/>
+            <available property="flexagon.cli" file="${out}/vendor/bin/flexagon"/>
+            <exec executable="${php}" dir="${out}" failonerror="true" if:set="flexagon.cli">
+                <arg value="vendor/bin/flexagon"/>
+                <arg value="check"/>
+            </exec>
+
+            <echo message="==> @{stage} ready in ${out}"/>
+        </sequential>
+    </macrodef>
+</project>

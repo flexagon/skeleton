@@ -175,7 +175,7 @@ base64( VERSION(1) || IV(16) || HMAC-SHA256(32) || CIPHERTEXT )
 - **Only string values are encrypted.** The annotation is ignored on `int`, `bool`, and `null` properties.
 - Only **exact-match** lookups work. `LIKE`, range conditions, and sorting on an encrypted column do not.
 - To look up by an encrypted value, pass the plaintext: `_select()` encrypts the model before binding. When writing your own SQL, bind `CryptoUtil::encryptString($value, _Global::$CLASS_PROPERTY_ENCRYPTION_PASSPHRASE)`.
-- Rows written before 3.5.1 used a random IV and will not match until they are saved again.
+- Rows written before 3.5.2 used a different IV and will not match until they are saved again.
 
 ---
 

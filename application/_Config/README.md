@@ -13,10 +13,12 @@ application/
 
 ## How a stage is applied
 
-- **Deploy (Docker, Ant)** — `docker build --target <stage>` and the Ant build copy **every file** in `_Config/<stage>/` over `application/`, so `_Config/production/_Config.php` becomes `application/_Config.php`. Any other file you put there (`_Const.php` and so on) replaces its namesake too. Keep only files meant for `application/` in a stage directory; this README sits outside them for that reason.
+- **Deploy (Docker, Ant)** — `docker build --target <stage>` and `ant <stage>` copy **every file** in `_Config/<stage>/` over `application/`, so `_Config/production/_Config.php` becomes `application/_Config.php`. Any other file you put there (`_Const.php` and so on) replaces its namesake too. Keep only files meant for `application/` in a stage directory; this README sits outside them for that reason.
 - **CLI** — `php script/sample.php runtimeStage=production` reads `_Config/production/_Config.php` instead of `application/_Config.php`.
 
-To add a stage, create `_Config/<name>/_Config.php`, then add a `config-<name>` stage and a `<name>` target block to the `Dockerfile`, like the existing ones.
+`ant <stage>` (`alpha`, `beta`, `production`) is for servers without containers. It builds `build/deploy/<stage>`: the project without `.env.php`, `.env`, `tests/`, editor and container files, the stage's files copied over `application/`, and `vendor/` installed from `composer.lock` without require-dev, then `flexagon check`. Upload that directory with rsync or your deploy tool; the project itself is not changed. Composer is `composer.phar` in the project root when there is one (PhpStorm downloads it there), else `composer` on the PATH. Another output directory, or another Composer, goes in `-Ddeploy.dir=DIR` / `-Dcomposer=PATH` or `build/build.properties` (see `build/sample_build.properties`).
+
+To add a stage, create `_Config/<name>/_Config.php`, then add a `config-<name>` stage and a `<name>` target block to the `Dockerfile`, and a `<name>` target to `build.xml`, like the existing ones.
 
 ## Secrets: read them with Env
 
