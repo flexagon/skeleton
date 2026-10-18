@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env.php)",
+      "Read(./**/.env.php)",
+      "Read(./.env)",
+      "Read(./**/.env)"
+    ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "denyRead": [
+        "./.env.php",
+        "./.env"
+      ]
+    }
+  }
+}

@@ -165,14 +165,17 @@ As a rule of thumb, allow roughly **`plaintext × 1.4 + 90`**. `VARCHAR(128)` is
 base64( VERSION(1) || IV(16) || HMAC-SHA256(32) || CIPHERTEXT )
 ```
 
-- A new IV is generated for every call. The same plaintext produces different ciphertext each time, so identical values cannot be identified by looking at the database alone.
+- The IV is derived from the plaintext with a keyed HMAC (a synthetic IV). The same plaintext always produces the same ciphertext, so an encrypted column can be matched with `WHERE col = :COL`. Values that only share a prefix still produce unrelated ciphertext.
+- The flip side: **rows with equal values can be recognised as equal from the database alone.** For low-cardinality values (a yes/no flag, a short PIN), that alone can reveal a lot. Ciphertext written by earlier builds with a random IV still decrypts.
 - Before decryption, the HMAC is verified with `hash_equals()`. Tampered values return an empty string.
 - Keys are derived from the passphrase with `hash_hkdf()`, with separate keys for encryption and authentication.
 
 ### Limitations
 
 - **Only string values are encrypted.** The annotation is ignored on `int`, `bool`, and `null` properties.
-- Encrypted columns cannot be searched with `WHERE` or sorted. If searching is required, use a separate hash column.
+- Only **exact-match** lookups work. `LIKE`, range conditions, and sorting on an encrypted column do not.
+- To look up by an encrypted value, pass the plaintext: `_select()` encrypts the model before binding. When writing your own SQL, bind `CryptoUtil::encryptString($value, _Global::$CLASS_PROPERTY_ENCRYPTION_PASSPHRASE)`.
+- Rows written before 3.5.1 used a random IV and will not match until they are saved again.
 
 ---
 
@@ -271,7 +274,7 @@ public function getArray(bool $containsObject = true, bool $forceAll = false): a
 
 Getters in the `is*()` form are handled the same way as `get*()`. With `$forceAll = true`, both forms ignore `@exclude_from_get_array` and are included.
 
-> Before 3.5.0, `is*()` getters were **omitted** when `$forceAll = true`. See [UPGRADE.md](UPGRADE.md) for details.
+> Before 3.5.0, `is*()` getters were **omitted** when `$forceAll = true`.
 
 **DAOs do not use this method when writing to the database.** They call the corresponding getter directly for each column declared by the schema (`is*()` if `get*()` is unavailable), so columns marked with `@exclude_from_get_array` are still used normally for storage and retrieval. This annotation affects **serialization only**.
 

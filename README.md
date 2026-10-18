@@ -66,9 +66,9 @@ Flexagon does not eagerly create unnecessary objects or services, and `DataSourc
 | Item | Version / Notes |
 |---|---|
 | PHP | 8.3 or later |
-| Extensions | `pdo_mysql`, `openssl`, `json` |
+| Extensions | `pdo_mysql` (or `pdo_pgsql`, `pdo_sqlite`, `pdo_sqlsrv`/`pdo_dblib`), `openssl`, `json` |
 | Web server | Apache (`mod_rewrite`) or nginx |
-| Database | MySQL / MariaDB, MS SQL Server |
+| Database | MySQL / MariaDB, PostgreSQL, SQLite, MS SQL Server |
 
 ---
 
@@ -112,7 +112,7 @@ composer require flexagon/framework
 composer exec flexagon init      # or php vendor/bin/flexagon init
 ```
 
-`init` creates the 18 files that make up the project structure, including `public/`, `application/`, `script/`, and `flexagon.php`. **Existing files are left untouched**, so you can also use it after an upgrade to add only newly introduced structure files. Use `--force` to overwrite existing files.
+`init` creates the 31 files that make up the project structure, including `public/`, `application/`, `script/`, and `flexagon.php`. **Existing files are left untouched**, so you can also use it after an upgrade to add only newly introduced structure files. Use `--force` to overwrite existing files.
 
 ```
 create   flexagon.php
@@ -123,13 +123,14 @@ keep     public/index.php        ← keep existing file
 
 > Installing only `flexagon/framework` gives you immediate access to utility classes such as `StringUtil`, `ValidUtil`, and `CryptoUtil`, as well as `BaseModel`. However, **the DAO layer requires the application to define `_Global`.** Without it, `BaseGlobal` defaults are used, so no fatal error occurs, but the empty data-source configuration prevents database connections. For real applications, start with the skeleton package.
 
-`flexagon.php` checks three layouts in order, so the entry-point code remains the same regardless of how the framework is installed.
+`flexagon.php` checks two layouts in order, so the entry-point code remains the same regardless of how the framework is installed.
 
 | Order | Path | Scenario |
 |---|---|---|
 | 1 | `vendor/flexagon/framework/Bootstrap.php` | Composer installation |
 | 2 | `application/_Flexagon.phar` (file) | Packaged as a single PHAR |
-| 3 | `application/_Flexagon.phar/Bootstrap.php` | Source directory |
+
+If neither is found, it stops with a `RuntimeException` that tells you to run `composer install` or build the PHAR with `ant build`. `vendor/autoload.php` is loaded before the framework so that Composer `files` entries are registered first.
 
 `Bootstrap.php` finds the nearest parent directory containing `application/_Global.php` and uses it as `PROJECT_ROOT`. Application path resolution therefore works the same whether the framework lives under `vendor/` or inside a PHAR.
 
@@ -147,12 +148,45 @@ The framework automatically loads the `_Flexagon\` namespace, global helpers (`_
 
 ### Docker
 
-The included `docker-compose.yml` provides a PHP 8.3 + Apache + Xdebug environment.
+The included `Dockerfile` and `compose.yaml` run **one site per container**. A container sends every request, whatever its host name, to the `FLEXAGON_PUBLIC` directory (default `public`). Which domain reaches which container is up to the load balancer, ingress or Cloud Run domain mapping.
+
+| Target | Purpose | Contents |
+|---|---|---|
+| `dev` | Local development (`compose.yaml`) | Project mounted at `/app`, `php.ini-development`, composer, Xdebug (installed, not loaded) |
+| `alpha`, `beta`, `production` | Deploy image per stage | Project copied in and `application/` overwritten by the files in `application/_Config/<stage>/`, `composer install --no-dev`, `php.ini-production`, opcache timestamp checks off, runs as `www-data`, `flexagon check` during the build |
+
+A PHP 8.3 + Apache image; the container listens on `PORT` (default 8080). The extensions to install are set in `PHP_EXTENSIONS` at the top of the `Dockerfile`: delete the ones you do not use and add the ones that are missing (see [DEPLOY.md](DEPLOY.md)).
+
+Default PHP extensions in the image: `pdo_mysql`, `pdo_pgsql`, `opcache`, `bcmath`, `exif`, `gd`, `gettext`, `intl`, `zip`
+
+**Development**
 
 ```bash
-docker compose up -d
-# http://127.0.0.1:9001
+docker compose up -d                       # web (:8080)
+docker compose exec web composer install   # when vendor/ is missing
+docker compose --profile xdebug up -d      # + web-xdebug with Xdebug on (:8081)
 ```
+
+The MySQL 8.4 and PostgreSQL 17 containers are included as comments, so by default they do not start and the application connects as `.env.php` says. To use one, uncomment the parts of `compose.yaml` marked `MySQL` or `PostgreSQL` (`DB_*` / `PGSQL_DB_*` under `environment`, `depends_on`, the service, and `volumes`).
+
+Once uncommented, the `DB_*` and `PGSQL_DB_*` values take precedence over `.env.php`, so the application in the container reaches these database containers whatever `.env.php` says. Every port listens on 127.0.0.1 only and can be changed with `FLEXAGON_HTTP_PORT`, `FLEXAGON_XDEBUG_PORT`, `FLEXAGON_MYSQL_PORT` and `FLEXAGON_PGSQL_PORT`.
+
+**More than one site** — a `public_*` directory next to `public/` is another site. It shares `application/` and needs its own `__flexagon.php`, `.htaccess`, `_entry.php`, `_prepare.php` and `_router.php` (copy them from `public/`). Run one container per site with, for example, `FLEXAGON_PUBLIC: public_admin` (see the `admin` example in `compose.yaml`). Locally the sites differ by port, but cookies do not, so open each under its own host name as well: `http://admin.localhost:8082`.
+
+**Deployment** — step-by-step instructions are in [DEPLOY.md](DEPLOY.md).
+
+```bash
+docker build --target production -t myapp .
+docker run -p 8080:8080 -e DB_HOST=... -e DB_PASSWORD=... myapp                 # public/
+docker run -p 8080:8080 -e FLEXAGON_PUBLIC=public_admin -e DB_HOST=... myapp    # public_admin/
+```
+
+- Hand secrets in as environment variables through your platform's secret store. `.dockerignore` keeps `.env.php` and `.env` out of the build, so they never reach an image.
+- Build one image and run it as one service per site, changing only `FLEXAGON_PUBLIC`. Each site can then have its own database account, scaling and network exposure (an admin site on the internal network only, say).
+- Sessions are encrypted cookies, so more instances need no shared store. Give every instance the same `SESSION_ENCRYPTION_STRING`.
+- A container's file system is gone on restart. Do not use SQLite or local uploads in production; use a managed database and object storage.
+- With a read-only root file system, mount tmpfs at `/var/run/apache2` and `/tmp`.
+- The number of Apache processes (`MaxRequestWorkers`) is set at start-up from the container's memory limit: (limit − 64MB) ÷ 48MB, at least 2 and at most 256 (512MB → 9, 1GB → 20, 2GB → 41). Raise `APACHE_WORKER_MEMORY_MB` if your requests use more memory, or set `APACHE_MAX_REQUEST_WORKERS` to choose the number yourself. Requests beyond it wait rather than fail. On platforms that set a per-instance concurrency, such as Cloud Run, match it to the process count. A process is replaced after 1000 connections (`APACHE_MAX_CONNECTIONS_PER_CHILD`).
 
 ### Database Configuration
 
@@ -160,16 +194,64 @@ Edit `application/_Config.php`.
 
 ```php
 <?php
+use _Flexagon\Libs\Env;
 use _Flexagon\Models\DataSourceModel;
 
 _Global::$DATA_SOURCES['default'] = new DataSourceModel(
-    'localhost',   // host
-    3306,          // port
-    'username',
-    'password',
-    'dbname'
+    Env::get('DB_HOST', 'localhost'),
+    Env::int('DB_PORT', 3306),
+    Env::get('DB_USER'),
+    Env::required('DB_PASSWORD'),
+    Env::get('DB_NAME')
 );
 ```
+
+The values come from `.env.php` or the environment; see the next section.
+
+### Secrets (`.env.php`)
+
+Keep passwords and keys out of `application/`. Copy `.env.example.php` to `.env.php` in the project root and fill it in; `_Config.php` reads the values with `Env`.
+
+```php
+<?php
+// .env.php — ignored by git, never under public/
+return [
+    'DB_USER'     => 'app',
+    'DB_PASSWORD' => 's3cr3t',
+    'DB_NAME'     => 'service',
+    'SESSION_ENCRYPTION_STRING' => '...',
+];
+```
+
+| Method | Returns |
+|---|---|
+| `Env::get($key, $default = null)` | The value, or `$default` |
+| `Env::required($key)` | The value; throws when it is missing or empty |
+| `Env::int($key, $default)` / `Env::bool($key, $default)` | Typed value; throws when it does not parse |
+| `Env::has($key)` | Whether the key is set |
+
+A value is looked up in **the process environment first, then `.env.php`, then the default**. In production you can set the same keys through PHP-FPM `env[...]`, Docker or your platform, and leave `.env.php` out. The file is plain PHP, so opcache keeps it compiled and values keep their types. It is read the first time `Env` is used, so an application that does not use it pays nothing. Define `ENV_FILE` before boot, or call `Env::load($path)`, to read another file.
+
+Nothing is written to `putenv()` or `$_ENV`, error messages name the key but never the value, and `var_dump()` of a `DataSourceModel` shows the password as `***`.
+
+`flexagon check` fails when `.env.php` is under `public/` or tracked by git, and warns about keys from `.env.example.php` that are not set, a password written directly into `_Config.php`, a leftover `.env` (Flexagon does not read it), and `opcache.file_cache` (which writes the compiled secrets to disk).
+
+#### Keeping AI coding agents out
+
+With the secrets in `.env.php`, the files under `application/` are safe for an agent to read. Block the one file in the agent itself. For Claude Code the skeleton ships `.claude/settings.json` (and `flexagon init` creates it when missing):
+
+```json
+{
+  "permissions": {
+    "deny": ["Read(./.env.php)", "Read(./**/.env.php)"]
+  },
+  "sandbox": {
+    "filesystem": { "denyRead": ["./.env.php"] }
+  }
+}
+```
+
+`permissions.deny` stops the Read tool; `sandbox.filesystem.denyRead` also stops shell commands such as `cat .env.php`. Use both. Other agents have their own ignore settings. An agent that can run code can still print a value at runtime (`php -r 'echo Env::get(...)'`), so give it a development `.env.php` with development credentials, not production ones.
 
 ### Your First Page
 
@@ -205,7 +287,7 @@ ok       display_errors  off
 
 **It catches configuration mistakes that might otherwise fail silently.** If `opcache.save_comments` is disabled, `@encrypt` and `@db_auto_timestamp` are ignored without an error. If `_Config.php` is placed under `public/`, database credentials may be exposed over the web. The command exits with status 1 when it finds a problem, making it suitable for deployment pipelines.
 
-See [Framework CLI](#프레임워크-cli) for the complete list of checks.
+See [Framework CLI](#framework-cli) for the complete list of checks.
 
 ---
 
@@ -341,7 +423,7 @@ Key configuration options:
 | `$USE_COMPOSER` | `true` | `vendor/autoload.php` auto-load |
 | `$USE_OUTPUT_BUFFER` | `true` | Wrap the entire request with `ob_start()` |
 | `$DB_STATEMENT_CACHE_SIZE` | `64` | Number of prepared statements cached per connection. `0` prepares every time |
-| `$DB_CONNECT_FAILURE_FATAL` | `true` | Abort the request on DB connection failure. If `false`, `connect()` returns `false` |
+| `$DB_CONNECT_FAILURE_FATAL` | `true` | Throw `_Flexagon\DB\ConnectionException` on DB connection failure (from the DAO constructor). If `false`, `connect()` returns `false` |
 | `$ENABLE_EXTENSION_PHP` | `false` | If `true`, URLs must explicitly include `.php` |
 | `$USE_AUTO_CREATED_AT_TIMESTAMP` | `true` | `@db_auto_timestamp insert` automatic timestamping |
 | `$USE_AUTO_UPDATED_AT_TIMESTAMP` | `true` | `@db_auto_timestamp update` automatic timestamping |
@@ -372,7 +454,8 @@ new DataSourceModel(
     string $password,
     string $dbName,
     ?string $charset = 'utf8mb4',
-    ?bool   $usePrepareStatement = true
+    ?bool   $usePrepareStatement = true,
+    array   $pdoOptions = []
 );
 ```
 
@@ -385,6 +468,19 @@ _Global::$DATA_SOURCES['analytics'] = new DataSourceModel('db-replica', 3306, 'r
 
 Each data source receives a unique ID based on `sha1(username@host/dbName)`, and `DataSourceManager` reuses connections by that ID. Multiple DAOs pointing to the same database therefore share a single connection within the request.
 
+`pdoOptions` is passed to `new PDO()` as is. It is where values the framework does not set go: TLS, timeouts and the like. The options the driver depends on (error mode, fetch mode, emulated prepares, connection charset) are the driver's and win.
+
+```php
+// MySQL that requires TLS (RDS, Azure, PlanetScale and others)
+_Global::$DATA_SOURCES['default'] = new DataSourceModel(
+    Env::get('DB_HOST'), Env::int('DB_PORT', 3306), Env::get('DB_USER'), Env::get('DB_PASSWORD'), Env::get('DB_NAME'),
+    pdoOptions: [PDO::MYSQL_ATTR_SSL_CA => '/etc/ssl/certs/rds-ca.pem'],
+);
+```
+
+> **Without an SSL option, MySQL connects in plain text even when the server offers TLS,** and a server that requires TLS refuses the connection. With a CA, the certificate and host name are verified.
+> **PostgreSQL defaults to `sslmode=prefer`:** TLS when the server offers it, but the certificate is not verified. To verify it, set the environment variables `PGSSLMODE=verify-full` and `PGSSLROOTCERT=/path/ca.pem` (read by libpq).
+
 ### Stage-specific Configuration
 
 Place stage-specific configuration in `application/_Config/<stage>/_Config.php` and select it from the CLI with the `runtimeStage` argument.
@@ -393,7 +489,7 @@ Place stage-specific configuration in `application/_Config/<stage>/_Config.php` 
 php script/batch.php runtimeStage=production
 ```
 
-The default stage directories are `alpha`, `beta`, and `production`.
+The default stage directories are `alpha`, `beta`, and `production`. A Docker image built with the target of the same name (`--target production` and so on) gets that stage directory's files copied into `application/` (see [Docker](#docker)).
 
 ---
 
@@ -444,6 +540,8 @@ Because `BaseModel` implements `JsonSerializable`, `json_encode($model)` works d
 
 Extend `BaseMySqlDAO` and specify `$tableName` to get the core CRUD operations.
 
+The framework wraps `$tableName` in backticks (MySQL) or brackets (SQL Server), so a reserved word such as `'order'` works as is. A name you have already quoted is not wrapped again: `'audit.users'`, `'[audit].[users]'` and `` '`app`.`users`' `` all produce the same statement.
+
 ```php
 <?php
 namespace ExampleUser;
@@ -492,7 +590,17 @@ The CRUD methods are `protected` by design. Each DAO explicitly chooses which op
 | `_insertAll($modelList, $chunkSize = 500)` | Bulk INSERT using one statement per chunk; returns the number of inserted rows |
 | `_truncate()` | TRUNCATE |
 
-When using SQL Server, `BaseMsSqlDAO` provides **the same method surface**. Both DAO implementations extend `BaseSqlDAO`, where CRUD operations, schema caching, and transaction handling are shared. Subclasses contain only dialect-specific behavior: identifier quoting (`` `name` `` / `[name]`), schema inspection (`DESCRIBE` / `INFORMATION_SCHEMA`), and pagination (`LIMIT` / `OFFSET·FETCH`).
+For PostgreSQL extend `BasePgSqlDAO`, for SQLite `BaseSqliteDAO`, and for SQL Server `BaseMsSqlDAO`; all provide **the same method surface**. Every DAO implementation extends `BaseSqlDAO`, where CRUD operations, schema caching, and transaction handling are shared. Subclasses contain only dialect-specific behavior: identifier quoting (`` `name` `` / `"name"` / `[name]`), schema inspection (`DESCRIBE` / `information_schema` / `PRAGMA table_info`), and pagination (`LIMIT` / `LIMIT·OFFSET` / `OFFSET·FETCH`).
+
+> **PostgreSQL:** a double-quoted identifier is case-sensitive, and the framework quotes `$tableName`. Write it as the table is stored, normally lower case (`'users'`, not `'Users'`). A bare name resolves through `search_path`; use `'audit.users'` for another schema.
+
+> **SQLite:** the data source is a file, created with `DataSourceModel::file()`.
+>
+> ```php
+> _Global::$DATA_SOURCES['default'] = DataSourceModel::file(PROJECT_ROOT . '/var/app.sqlite');
+> ```
+>
+> The directory must exist; a wrong path fails to connect instead of creating an empty database. `INTEGER PRIMARY KEY` is the auto-increment column, `_truncate()` runs `DELETE`, and foreign keys are enforced. SQLite locks the whole file for writes, so for a site with concurrent writers turn on WAL once (`PRAGMA journal_mode = WAL`).
 
 When you need direct SQL, use `$this->db` (a `Mysql` instance).
 
@@ -586,7 +694,7 @@ protected ?int $updatedAt = null;
 
 Automatically encrypts and decrypts properties with AES-256-CBC. Values are encrypted before being stored in the database and decrypted when query results are mapped back to objects.
 
-Ciphertext uses the format `base64(version || IV || HMAC-SHA256 || ciphertext)`. A fresh IV is generated for every operation, so identical plaintext produces different ciphertext each time. Before decryption, the HMAC is verified with `hash_equals()` to reject tampered data. Encryption and authentication keys are derived separately from the passphrase using `hash_hkdf()`.
+Ciphertext uses the format `base64(version || IV || HMAC-SHA256 || ciphertext)`. The IV is a synthetic IV derived from the plaintext with a keyed HMAC, so identical plaintext always produces identical ciphertext and an encrypted column can be matched with `WHERE col = :COL` (in exchange, rows with equal values are recognisable as equal in the database). Before decryption, the HMAC is verified with `hash_equals()` to reject tampered data. Encryption and authentication keys are derived separately from the passphrase using `hash_hkdf()`.
 
 ```php
 /**
@@ -664,6 +772,26 @@ class StatsDAO extends BaseMySqlDAO {
 }
 ```
 
+### Connection Failures
+
+When a data source cannot be reached, the DAO constructor throws `_Flexagon\DB\ConnectionException` (with the default `_Global::$DB_CONNECT_FAILURE_FATAL = true`). Left uncaught, the request ends with a 500, or exit code 255 on the command line. Catch it to choose the response yourself.
+
+```php
+// public/_entry.php
+set_exception_handler(function (Throwable $e) {
+    if ( $e instanceof \_Flexagon\DB\ConnectionException ) {
+        http_response_code(503);
+        TemplateLoader::show('maintenance');
+        return;
+    }
+    throw $e;
+});
+```
+
+The message names only the data source (`$e->getDataSourceId()`, the key in `_Global::$DATA_SOURCES`). The driver message, which includes host and account, goes to the error log; the original `PDOException` is available from `getPrevious()`. Keep `display_errors` off in production: an uncaught exception printed on screen includes the previous exception too.
+
+Set `$DB_CONNECT_FAILURE_FATAL = false` to have `connect()` return `false` instead of throwing.
+
 ---
 
 ## Sessions
@@ -675,7 +803,7 @@ Flexagon sessions serialize model objects into **encrypted cookies** rather than
 ```php
 // application/_Config.php
 _Global::$SESSION_AUTO_START      = true;
-_Global::$SESSION_ENCRYPTION_STRING = 'change-this-to-a-long-random-string';
+_Global::$SESSION_ENCRYPTION_STRING = Env::required('SESSION_ENCRYPTION_STRING');   // from .env.php
 _Global::$SESSION_DOMAIN          = '.example.com';
 _Global::$SESSION_TIMEOUT_SECONDS = 86400;
 
@@ -760,7 +888,7 @@ if (str_starts_with(_Global::$URL_PARAM->filePath, 'admin/')) {
 
 ## Security
 
-Flexagon clearly separates protections provided by the framework from responsibilities left to the application. See [SECURITY.md](SECURITY.md) for the full list and vulnerability-reporting process.
+The line between what the framework protects against and what the application is responsible for is clearly drawn. If you find a security vulnerability, do not open a public issue; report it to **young@phpk.org** (with `[SECURITY]` in the subject).
 
 ### What the Framework Provides
 
@@ -770,7 +898,7 @@ Flexagon clearly separates protections provided by the framework from responsibi
 | Path traversal | Router include paths cannot escape `public/` |
 | Session integrity | AES-256-CBC + HMAC-SHA256, expiration verified **server-side** |
 | Session cookies | `HttpOnly`·`SameSite` enabled by default; `Secure` automatic |
-| Column encryption | `@encrypt` — random IV, HMAC verification, HKDF key derivation |
+| Column encryption | `@encrypt` — synthetic IV (exact-match searchable), HMAC verification, HKDF key derivation |
 | Forced logout | `$SESSION_NOT_BEFORE`invalidates all sessions (stateless) |
 
 ### Application Responsibilities
@@ -857,7 +985,7 @@ All utilities use static methods and have no external dependencies. Their namesp
 | `StringUtil` | case conversion, UTF-8 cleanup, hex encoding, random string generation |
 | `ArrayUtil` | camelCase key conversion, array diff, nested-array key lookup |
 | `ValidUtil` | email, integer, float, alphanumeric, and ID validation |
-| `CryptoUtil` | AES-256-CBC encryption/decryption (strings / arrays, random IV support) |
+| `CryptoUtil` | AES-256-CBC encryption/decryption (deterministic `encryptString()` for columns; random-IV `encrypt()` for strings / arrays) |
 | `FileUtil` | directory traversal, recursive creation, extension detection |
 | `HttpUtil` | URL parsing, query-string parsing, request-path resolution |
 | `NetUtil` | GET/POST HTTP client, JSON response parsing, file uploads |
@@ -869,6 +997,7 @@ All utilities use static methods and have no external dependencies. Their namesp
 | `AssetLoader` | CSS/JS management |
 | `TemplateLoader` | template loading |
 | `DataSourceManager` | connection reuse and global transactions |
+| `Env` | settings and secrets from the environment and `.env.php` |
 
 ### Global Helper Functions
 
@@ -879,7 +1008,55 @@ _echo('Hello, {name}', ['name' => $user->getName()]);   // substitute and output
 $msg = _t('{count} results found', ['count' => 42]);    // substitute and return
 ```
 
-When gettext (`__()` or `_()`) is available, translation is applied before placeholder substitution.
+`___()` is an alias of `_t()`. Placeholders are substituted in a single pass, so a value that itself contains `{name}` is not substituted again.
+
+### Translation (I18n)
+
+The helpers translate a message through the translator registered with `_Flexagon\I18n\Translator` before substituting placeholders. **If no translator is registered, the original message is used as is.**
+
+A translator implements a single method.
+
+```php
+namespace _Flexagon\I18n;
+
+interface TranslatorInterface
+{
+    public function translate(string $message): string;
+}
+```
+
+Register it once, early in the request (`public/_entry.php` or `application/_Config.php`).
+
+```php
+// public/_entry.php
+use _Flexagon\I18n\Translator;
+
+setlocale(LC_MESSAGES, 'ko_KR.UTF-8');
+bindtextdomain('messages', LOCALE_ROOT);
+textdomain('messages');
+
+Translator::setTranslator(new \I18n\GettextTranslator());
+```
+
+The skeleton ships three example adapters in `application/I18n/`.
+
+| Class | Translates with | Requires |
+|---|---|---|
+| `GettextTranslator` | `gettext()` | `ext-gettext` |
+| `MoTranslator` | `__()` | A library that defines `__()` (e.g. a `.mo` reader) |
+| `SymfonyTranslator` | `trans()` | `symfony/translation` |
+
+```php
+Translator::setTranslator(new \I18n\SymfonyTranslator($symfonyTranslator));
+```
+
+`LOCALE_ROOT` defaults to `PROJECT_ROOT . '/locale'`. To change it, `define()` it before the framework boots.
+
+Keep these points in mind:
+
+- **Output is not escaped.** `_echo()` prints the translated, substituted string as is. Escape user-supplied values with `htmlspecialchars()` before passing them in, and treat translation catalogs as trusted HTML sources.
+- **The translator is static, per process.** That fits the PHP-FPM model, where every request starts clean. In long-running workers (Swoole, RoadRunner, FrankenPHP worker mode), re-register the translator for every request. `setlocale()` is process-wide and not safe across threads.
+- **The adapter determines the cost.** The framework adds about 0.3 µs per call. gettext caches `.mo` files per process (restart PHP-FPM after updating them); some `.mo` libraries parse the file on every request; Symfony Translation reloads catalogs on each request unless `cache_dir` is set.
 
 ### Enum Helpers
 
@@ -958,14 +1135,14 @@ php script/flexagon.php check [--path=DIR]
 
 #### `init`
 
-Creates the 18 files that make up the project structure. If you started with `composer create-project flexagon/skeleton`, these files already exist. This command is primarily useful when **adding `flexagon/framework` to an existing project with `composer require`**.
+Creates the 31 files that make up the project structure. If you started with `composer create-project flexagon/skeleton`, these files already exist. This command is primarily useful when **adding `flexagon/framework` to an existing project with `composer require`**.
 
 **Existing files are left untouched.** You can also run the command after an upgrade to add only newly introduced structure files.
 
 ```
 create   script/flexagon.php
 keep     public/index.php
-1 created, 17 kept, 0 failed
+1 created, 22 kept, 0 failed
 ```
 
 Use `--force` if you need to overwrite existing files. Be careful: modified files will be replaced with the template versions.
@@ -980,11 +1157,17 @@ Checks that the project layout and runtime configuration are consistent and retu
 | `ext-json` · `ext-openssl` · `ext-pdo` | Loaded | Error |
 | `opcache.save_comments` | Enabled | Error |
 | `project layout` | `flexagon.php` · `application/_Global.php` · `public/__flexagon.php` · `public/_router.php` | Error |
-| `config placement` | `_Config.php` and `application/` are not exposed under `public/` | Error |
+| `config placement` | `_Config.php` and `application/` are not exposed under `public/` or any `public_*` | Error |
 | `bootstrap` | Framework boots successfully | Error |
 | `session key` | `$SESSION_ENCRYPTION_STRING` length when `$SESSION_AUTO_START` is enabled | Error |
 | `data sources` | Configured; no template placeholders remain | Warning |
 | `display_errors` | Enabled in production mode | Warning |
+| `secrets placement` | `.env.php` / `.env` under `public/` or any `public_*` | Error |
+| `.env.php` | Returns an array; not tracked by git | Error |
+| `settings` | Keys in `.env.example.php` that are not set | Warning |
+| `secrets in config` | A data source password written into `_Config.php` | Warning |
+| `.env` | Present but not read by Flexagon | Warning |
+| `opcache.file_cache` | On while `.env.php` exists (compiled secrets on disk) | Warning |
 
 The following checks are especially important because these issues can otherwise **fail silently**.
 

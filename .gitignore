@@ -7,6 +7,12 @@
 # Dependencies are installed, never committed.
 /vendor/
 
+# This machine's secrets. .env.example.php is the committed template.
+/.env.php
+
+# .claude/settings.json is shared and blocks .env.php; the local file is personal.
+/.claude/settings.local.json
+
 # composer.lock is deliberately absent here: an application should commit its
 # own lock file, so this skeleton must not teach projects to ignore it.
 

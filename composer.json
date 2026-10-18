@@ -3,9 +3,10 @@
     "description": "Application skeleton for the Flexagon PHP framework",
     "type": "project",
     "keywords": [
+        "flexagon",
+        "php",
         "framework",
-        "skeleton",
-        "flexagon"
+        "skeleton"
     ],
     "homepage": "https://flexagon.org",
     "license": "MIT",
@@ -23,7 +24,7 @@
     },
     "require": {
         "php": ">=8.3",
-        "flexagon/framework": "^3.5"
+        "flexagon/framework": "^3.5.2"
     },
     "require-dev": {
         "phpunit/phpunit": "^12.0"

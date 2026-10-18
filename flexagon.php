@@ -28,8 +28,6 @@ if ( is_file(PROJECT_ROOT . '/vendor/flexagon/framework/Bootstrap.php') ) {
     require_once PROJECT_ROOT . '/vendor/flexagon/framework/Bootstrap.php';
 } elseif ( is_file(PROJECT_ROOT . '/application/_Flexagon.phar') ) {
     require_once PROJECT_ROOT . '/application/_Flexagon.phar';
-} elseif ( is_file(PROJECT_ROOT . '/application/_Flexagon.phar/Bootstrap.php') ) {
-    require_once PROJECT_ROOT . '/application/_Flexagon.phar/Bootstrap.php';
 } else {
     throw new RuntimeException(
         '[FLEXAGON] Framework not found under ' . PROJECT_ROOT . '.'

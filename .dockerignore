@@ -1,0 +1,19 @@
+# The alpha, beta and production images copy the project in. Secrets come
+# from the environment at run time; none of these may end up in an image layer.
+.env.php
+.env
+**/.env.php
+**/.env
+
+.git
+.claude
+.idea
+.vscode
+.DS_Store
+
+# Installed fresh, without require-dev, inside the build.
+vendor
+
+tests
+.phpunit.cache
+.phpunit.result.cache

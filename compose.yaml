@@ -1,0 +1,96 @@
+# Local development. One container per site, as in production: each serves
+# its FLEXAGON_PUBLIC directory to every request, whatever the host name.
+#
+#   docker compose up                    web only
+#   docker compose --profile xdebug up   and web-xdebug, Xdebug on, at :8081
+#
+# MySQL 8.4 and PostgreSQL 17 containers are included but commented out, so
+# the application uses whatever .env.php says (see .env.example.php). To use
+# MySQL or PostgreSQL here, uncomment its block in each of the four places
+# marked "MySQL" / "PostgreSQL" below: environment, depends_on, services and
+# volumes. Once uncommented, that environment wins over .env.php, so the
+# application reaches these containers whatever .env.php says. The database
+# passwords are for these throwaway containers only, which listen on 127.0.0.1.
+
+x-web: &web
+  build:
+    context: .
+    target: dev
+  volumes:
+    - .:/app
+  environment: &web-env
+    FLEXAGON_PUBLIC: public
+    # MySQL: uncomment to connect to the mysql container below.
+    # DB_HOST: mysql
+    # DB_PORT: 3306
+    # DB_USER: flexagon
+    # DB_PASSWORD: flexagon
+    # DB_NAME: flexagon
+    # PostgreSQL: uncomment to connect to the pgsql container below.
+    # PGSQL_DB_HOST: pgsql
+    # PGSQL_DB_PORT: 5432
+    # PGSQL_DB_USER: flexagon
+    # PGSQL_DB_PASSWORD: flexagon
+    # PGSQL_DB_NAME: flexagon
+  # Uncomment depends_on together with the line of each database you use.
+  # depends_on:
+  #   - mysql                             # MySQL
+  #   - pgsql                             # PostgreSQL
+
+services:
+  web:                                    # http://localhost:8080
+    <<: *web
+    ports:
+      - "127.0.0.1:${FLEXAGON_HTTP_PORT:-8080}:8080"
+
+  web-xdebug:                             # http://localhost:8081
+    <<: *web
+    profiles: [xdebug]
+    ports:
+      - "127.0.0.1:${FLEXAGON_XDEBUG_PORT:-8081}:8080"
+    environment:
+      <<: *web-env
+      # Adds docker/xdebug.ini to the ini files PHP reads.
+      PHP_INI_SCAN_DIR: ":/usr/local/etc/php/xdebug.d"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Another site is another container. Browsers share cookies across ports,
+  # so open it under its own host name: http://admin.localhost:8082
+  # admin:
+  #   <<: *web
+  #   ports:
+  #     - "127.0.0.1:8082:8080"
+  #   environment:
+  #     <<: *web-env
+  #     FLEXAGON_PUBLIC: public_admin
+
+  # MySQL: uncomment to run a MySQL 8.4 container.
+  # mysql:
+  #   image: mysql:8.4
+  #   environment:
+  #     MYSQL_DATABASE: flexagon
+  #     MYSQL_USER: flexagon
+  #     MYSQL_PASSWORD: flexagon
+  #     MYSQL_ROOT_PASSWORD: flexagon
+  #   ports:
+  #     - "127.0.0.1:${FLEXAGON_MYSQL_PORT:-3306}:3306"
+  #   volumes:
+  #     - mysql-data:/var/lib/mysql
+
+  # PostgreSQL: uncomment to run a PostgreSQL 17 container.
+  # pgsql:
+  #   image: postgres:17
+  #   environment:
+  #     POSTGRES_DB: flexagon
+  #     POSTGRES_USER: flexagon
+  #     POSTGRES_PASSWORD: flexagon
+  #   ports:
+  #     - "127.0.0.1:${FLEXAGON_PGSQL_PORT:-5432}:5432"
+  #   volumes:
+  #     - pgsql-data:/var/lib/postgresql/data
+
+# Uncomment volumes together with the line of each database you use.
+# volumes:
+#   mysql-data:                           # MySQL
+#   pgsql-data:                           # PostgreSQL
